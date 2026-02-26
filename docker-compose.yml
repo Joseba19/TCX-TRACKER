@@ -1,0 +1,18 @@
+services:
+  tcx-tracker:
+    build: .
+    container_name: tcx-tracker
+    restart: unless-stopped          # arranca solo con el NAS
+
+    ports:
+      - "5000:5000"                  # cambia el primer 5000 si el puerto está ocupado
+
+    volumes:
+      - ./data:/data                 # aquí van los .tcx y la base de datos
+
+    environment:
+      - TZ=Europe/Madrid             # ajusta a tu zona horaria
+
+    # Límites opcionales de recursos
+    # mem_limit: 256m
+    # cpus: "0.5"

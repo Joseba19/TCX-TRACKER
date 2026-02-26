@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCX Tracker — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+/* ── RESET & TOKENS ───────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #0a0a0a;
+  --surface:    #111111;
+  --surface2:   #1a1a1a;
+  --border:     #2a2a2a;
+  --accent:     #ff5c00;       /* naranja fosforito */
+  --accent2:    #ffb800;       /* ámbar para secundario */
+  --text:       #e8e8e8;
+  --muted:      #666;
+  --green:      #22c55e;
+  --red:        #ef4444;
+  --font-head:  'Barlow Condensed', sans-serif;
+  --font-mono:  'JetBrains Mono', monospace;
+  --r:          4px;
+}
+
+html { font-size: 16px; scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-head);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── NOISE TEXTURE overlay ───────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: .4;
+}
+
+/* ── HEADER ──────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(10,10,10,.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2rem;
+  height: 56px;
+}
+
+.logo {
+  font-size: 1.4rem; font-weight: 900; letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.logo span { color: var(--accent); }
+
+.status-pill {
+  display: flex; align-items: center; gap: .5rem;
+  font-family: var(--font-mono); font-size: .72rem; color: var(--muted);
+}
+.status-pill .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: .4; }
+}
+
+/* ── LAYOUT ──────────────────────────────────────── */
+main {
+  position: relative; z-index: 1;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem 2rem 4rem;
+  display: grid;
+  gap: 1.5rem;
+}
+
+/* ── SECTION TITLE ───────────────────────────────── */
+.section-title {
+  font-size: .7rem; font-weight: 700; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: .75rem;
+  display: flex; align-items: center; gap: .5rem;
+}
+.section-title::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+/* ── CARDS ───────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 1.25rem 1.5rem;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .2s;
+}
+.card:hover { border-color: #3a3a3a; }
+
+.card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0;
+  transition: opacity .2s;
+}
+.card:hover::before { opacity: 1; }
+
+/* ── SUMMARY ROW ─────────────────────────────────── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 1.1rem 1.25rem;
+  display: flex; flex-direction: column; gap: .3rem;
+  position: relative;
+  transition: border-color .2s, transform .15s;
+}
+.stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+.stat-label {
+  font-size: .65rem; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--muted);
+}
+.stat-value {
+  font-size: 2.4rem; font-weight: 900; line-height: 1;
+  color: var(--text);
+}
+.stat-value .unit {
+  font-size: 1rem; font-weight: 400; color: var(--muted);
+  margin-left: .2em;
+}
+.stat-sub {
+  font-size: .72rem; color: var(--muted);
+  font-family: var(--font-mono);
+}
+.stat-accent { color: var(--accent); }
+
+/* ── LAST WORKOUT BANNER ─────────────────────────── */
+.last-banner {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+  padding: 1rem 1.5rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2rem;
+}
+.last-label {
+  font-size: .65rem; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--accent);
+}
+.last-metrics {
+  display: flex; gap: 2.5rem; flex-wrap: wrap;
+}
+.last-metric { display: flex; flex-direction: column; gap: .1rem; }
+.last-metric .val {
+  font-size: 1.5rem; font-weight: 700;
+  font-family: var(--font-mono); color: var(--text);
+}
+.last-metric .lbl {
+  font-size: .65rem; text-transform: uppercase;
+  letter-spacing: .12em; color: var(--muted);
+}
+
+/* ── 2-COL ───────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+/* ── CHART CONTAINERS ────────────────────────────── */
+.chart-wrap {
+  position: relative;
+  height: 240px;
+}
+
+/* ── ZONES ───────────────────────────────────────── */
+.zones-list { display: flex; flex-direction: column; gap: .5rem; }
+.zone-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 52px;
+  align-items: center; gap: .75rem;
+}
+.zone-label {
+  font-size: .75rem; font-weight: 600; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.zone-bar-bg {
+  height: 10px; background: var(--surface2);
+  border-radius: 2px; overflow: hidden;
+}
+.zone-bar-fill {
+  height: 100%; border-radius: 2px;
+  transition: width .8s cubic-bezier(.4,0,.2,1);
+}
+.zone-pct {
+  font-family: var(--font-mono); font-size: .75rem;
+  color: var(--text); text-align: right;
+}
+
+/* ── RECORDS ─────────────────────────────────────── */
+.records-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+}
+.record-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 1rem;
+  display: flex; flex-direction: column; gap: .3rem;
+  transition: border-color .2s;
+}
+.record-card:hover { border-color: var(--accent2); }
+.record-dist {
+  font-size: .65rem; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--accent2);
+}
+.record-pace {
+  font-size: 1.8rem; font-weight: 700;
+  font-family: var(--font-mono); color: var(--text);
+  line-height: 1;
+}
+.record-meta {
+  font-size: .68rem; color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* ── HEATMAP ─────────────────────────────────────── */
+.heatmap-wrap {
+  overflow-x: auto;
+  padding-bottom: .5rem;
+}
+.heatmap-grid {
+  display: flex;
+  gap: 3px;
+  min-width: fit-content;
+}
+.heatmap-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.heatmap-cell {
+  width: 14px; height: 14px;
+  border-radius: 2px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform .1s;
+  position: relative;
+}
+.heatmap-cell:hover { transform: scale(1.3); z-index: 10; }
+.heatmap-cell[data-level="1"] { background: #7c3d10; border-color: #9a4e14; }
+.heatmap-cell[data-level="2"] { background: #c2470f; border-color: #d4530f; }
+.heatmap-cell[data-level="3"] { background: var(--accent); border-color: #ff7a2a; }
+
+.heatmap-months {
+  display: flex;
+  gap: 3px;
+  min-width: fit-content;
+  margin-bottom: 4px;
+}
+.heatmap-month-label {
+  font-size: .62rem; color: var(--muted);
+  font-family: var(--font-mono);
+  width: 14px; text-align: center;
+  white-space: nowrap;
+}
+
+/* ── WORKOUTS TABLE ──────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table {
+  width: 100%; border-collapse: collapse;
+  font-size: .82rem;
+}
+thead th {
+  font-size: .62rem; font-weight: 700;
+  letter-spacing: .15em; text-transform: uppercase;
+  color: var(--muted); text-align: left;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background .15s;
+}
+tbody tr:hover { background: var(--surface2); }
+tbody td {
+  padding: .6rem .75rem;
+  font-family: var(--font-mono); font-size: .78rem;
+  color: var(--text);
+}
+.badge {
+  display: inline-block;
+  padding: .15rem .5rem;
+  border-radius: 2px;
+  font-size: .65rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.badge-run  { background: rgba(255,92,0,.15); color: var(--accent); border: 1px solid rgba(255,92,0,.3); }
+.badge-bike { background: rgba(255,184,0,.15); color: var(--accent2); border: 1px solid rgba(255,184,0,.3); }
+
+/* ── TOOLTIP ─────────────────────────────────────── */
+.tooltip {
+  position: fixed; z-index: 1000;
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  padding: .5rem .75rem;
+  font-size: .72rem; font-family: var(--font-mono);
+  color: var(--text);
+  pointer-events: none;
+  display: none;
+}
+
+/* ── LOADING ─────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--r);
+  height: 2.4rem;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── EFFICIENCY ANNOTATION ───────────────────────── */
+.eff-legend {
+  display: flex; gap: 1.5rem; margin-top: .75rem;
+  font-size: .68rem; color: var(--muted); flex-wrap: wrap;
+}
+.eff-legend span { display: flex; align-items: center; gap: .4rem; }
+.eff-legend .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="logo">TCX<span>/</span>TRACKER</div>
+  <div class="status-pill">
+    <div class="dot"></div>
+    <span id="db-status">cargando...</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── RESUMEN RÁPIDO ───────────────────────────── -->
+  <div>
+    <div class="section-title">Resumen general</div>
+    <div class="summary-grid" id="summary-grid">
+      <div class="stat-card"><div class="skeleton"></div></div>
+      <div class="stat-card"><div class="skeleton"></div></div>
+      <div class="stat-card"><div class="skeleton"></div></div>
+      <div class="stat-card"><div class="skeleton"></div></div>
+      <div class="stat-card"><div class="skeleton"></div></div>
+      <div class="stat-card"><div class="skeleton"></div></div>
+    </div>
+  </div>
+
+  <!-- ── ÚLTIMA SALIDA ────────────────────────────── -->
+  <div id="last-banner-wrap"></div>
+
+  <!-- ── EFICIENCIA + CARGA SEMANAL ───────────────── -->
+  <div class="two-col">
+    <div class="card">
+      <div class="section-title">Eficiencia aeróbica</div>
+      <div style="font-size:.72rem; color:var(--muted); margin-bottom:.75rem; font-family:var(--font-mono)">
+        metros por latido &nbsp;·&nbsp; <span style="color:var(--accent)">↑ mejor</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-efficiency"></canvas></div>
+      <div class="eff-legend">
+        <span><span class="dot" style="background:var(--accent)"></span>Eficiencia (m/latido)</span>
+        <span><span class="dot" style="background:var(--muted)"></span>Ritmo (seg/km inverso)</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Carga semanal</div>
+      <div style="font-size:.72rem; color:var(--muted); margin-bottom:.75rem; font-family:var(--font-mono)">
+        kilómetros por semana
+      </div>
+      <div class="chart-wrap"><canvas id="chart-weekly"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── ZONAS FC + RÉCORDS ────────────────────────── -->
+  <div class="two-col">
+    <div class="card">
+      <div class="section-title">Distribución zonas FC</div>
+      <div style="font-size:.72rem; color:var(--muted); margin-bottom:1rem; font-family:var(--font-mono)">
+        % del tiempo total por zona de frecuencia cardíaca
+      </div>
+      <div class="zones-list" id="zones-list">
+        <div class="skeleton" style="height:10px"></div>
+      </div>
+      <div style="margin-top:1.25rem">
+        <div class="chart-wrap" style="height:180px"><canvas id="chart-zones"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Récords personales</div>
+      <div style="font-size:.72rem; color:var(--muted); margin-bottom:1rem; font-family:var(--font-mono)">
+        mejor ritmo medio por distancia mínima
+      </div>
+      <div class="records-grid" id="records-grid">
+        <div class="skeleton" style="height:80px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HEATMAP ───────────────────────────────────── -->
+  <div class="card">
+    <div class="section-title">Consistencia — últimos 365 días</div>
+    <div id="heatmap-container">
+      <div class="skeleton" style="height:90px"></div>
+    </div>
+    <div style="display:flex; align-items:center; gap:.5rem; margin-top:.75rem; font-size:.65rem; color:var(--muted); font-family:var(--font-mono)">
+      Menos
+      <span style="display:inline-flex; gap:3px">
+        <span style="width:12px;height:12px;border-radius:2px;background:var(--surface2);border:1px solid var(--border)"></span>
+        <span style="width:12px;height:12px;border-radius:2px;background:#7c3d10"></span>
+        <span style="width:12px;height:12px;border-radius:2px;background:#c2470f"></span>
+        <span style="width:12px;height:12px;border-radius:2px;background:var(--accent)"></span>
+      </span>
+      Más
+    </div>
+  </div>
+
+  <!-- ── TABLA HISTORIAL ───────────────────────────── -->
+  <div class="card">
+    <div class="section-title">Historial completo</div>
+    <div class="table-wrap">
+      <table id="workouts-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Deporte</th>
+            <th>Dist.</th>
+            <th>Tiempo</th>
+            <th>Ritmo</th>
+            <th>FC med</th>
+            <th>FC máx</th>
+            <th>Cadencia</th>
+            <th>Kcal</th>
+          </tr>
+        </thead>
+        <tbody id="workouts-tbody">
+          <tr><td colspan="9" style="color:var(--muted);padding:1rem">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<!-- tooltip global -->
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+// ── CHART DEFAULTS ────────────────────────────────────
+Chart.defaults.color = '#666';
+Chart.defaults.borderColor = '#2a2a2a';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 11;
+
+const ACCENT  = '#ff5c00';
+const ACCENT2 = '#ffb800';
+const SURFACE = '#1a1a1a';
+const MUTED   = '#444';
+
+// ── FETCH HELPERS ─────────────────────────────────────
+async function api(endpoint) {
+  const r = await fetch(endpoint);
+  return r.json();
+}
+
+// ── FORMAT HELPERS ────────────────────────────────────
+function fmtPace(sec) {
+  if (!sec) return '--';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// ── TOOLTIP ───────────────────────────────────────────
+const tooltip = document.getElementById('tooltip');
+function showTip(e, html) {
+  tooltip.innerHTML = html;
+  tooltip.style.display = 'block';
+  tooltip.style.left = (e.clientX + 12) + 'px';
+  tooltip.style.top  = (e.clientY - 28) + 'px';
+}
+function hideTip() { tooltip.style.display = 'none'; }
+document.addEventListener('mousemove', e => {
+  if (tooltip.style.display !== 'none') {
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top  = (e.clientY - 28) + 'px';
+  }
+});
+
+// ── SUMMARY ───────────────────────────────────────────
+async function loadSummary() {
+  const d = await api('/api/summary');
+
+  document.getElementById('db-status').textContent =
+    `${d.total_workouts} entrenamientos · workouts.db`;
+
+  const grid = document.getElementById('summary-grid');
+  grid.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Salidas totales</div>
+      <div class="stat-value">${d.total_workouts}</div>
+      <div class="stat-sub">${d.runs_this_month} este mes</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Kilómetros</div>
+      <div class="stat-value">${d.total_km}<span class="unit">km</span></div>
+      <div class="stat-sub">${d.km_this_month} km este mes</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Tiempo total</div>
+      <div class="stat-value">${d.total_time_h}<span class="unit">h</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Calorías</div>
+      <div class="stat-value">${d.total_cal.toLocaleString('es-ES')}<span class="unit">kcal</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Racha semanal</div>
+      <div class="stat-value stat-accent">${d.streak_weeks}<span class="unit">sem</span></div>
+    </div>
+    <div class="stat-card" style="border-color:#2a2a2a">
+      <div class="stat-label">Última salida</div>
+      <div class="stat-value" style="font-size:1.1rem;margin-top:.2rem">${d.last.date || '--'}</div>
+      <div class="stat-sub">${d.last.dist_km} km · ${d.last.pace} /km</div>
+    </div>
+  `;
+
+  // Last workout banner
+  if (d.last.date) {
+    document.getElementById('last-banner-wrap').innerHTML = `
+      <div class="last-banner">
+        <div>
+          <div class="last-label">Última salida</div>
+          <div style="font-size:.82rem;color:var(--muted);font-family:var(--font-mono);margin-top:.15rem">${d.last.date} · ${d.last.sport}</div>
+        </div>
+        <div class="last-metrics">
+          <div class="last-metric"><div class="val">${d.last.dist_km}</div><div class="lbl">km</div></div>
+          <div class="last-metric"><div class="val">${d.last.time}</div><div class="lbl">tiempo</div></div>
+          <div class="last-metric"><div class="val">${d.last.pace}</div><div class="lbl">ritmo</div></div>
+          <div class="last-metric"><div class="val">${d.last.avg_hr || '--'}</div><div class="lbl">FC media</div></div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// ── EFFICIENCY CHART ──────────────────────────────────
+async function loadEfficiency() {
+  const data = await api('/api/efficiency');
+  const ctx = document.getElementById('chart-efficiency').getContext('2d');
+
+  const labels = data.map(d => d.date);
+  const effData = data.map(d => d.eff);
+  // Ritmo invertido para mostrar juntos (mayor = más rápido)
+  const paceInv = data.map(d => d.pace_sec ? +(1000 / d.pace_sec).toFixed(3) : null);
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Eficiencia (m/latido)',
+          data: effData,
+          borderColor: ACCENT,
+          backgroundColor: ACCENT + '22',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          fill: true,
+          tension: .3,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Velocidad (m/s)',
+          data: paceInv,
+          borderColor: MUTED,
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4,3],
+          pointRadius: 3,
+          tension: .3,
+          yAxisID: 'y2',
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#111',
+          borderColor: ACCENT,
+          borderWidth: 1,
+          callbacks: {
+            title: items => items[0].label,
+            label: item => {
+              const d = data[item.dataIndex];
+              if (item.datasetIndex === 0)
+                return ` Eficiencia: ${d.eff} m/lat  ·  FC: ${d.avg_hr} ppm`;
+              return ` Velocidad: ${d.pace_sec ? (1000/d.pace_sec).toFixed(2) : '--'} m/s  ·  Ritmo: ${d.pace_fmt}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#1e1e1e' }, ticks: { maxTicksLimit: 8 } },
+        y: {
+          position: 'left',
+          grid: { color: '#1e1e1e' },
+          title: { display: true, text: 'm/latido', color: ACCENT, font: { size: 10 } }
+        },
+        y2: {
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'm/s', color: MUTED, font: { size: 10 } }
+        }
+      }
+    }
+  });
+}
+
+// ── WEEKLY LOAD CHART ─────────────────────────────────
+async function loadWeekly() {
+  const data = await api('/api/weekly');
+  const ctx = document.getElementById('chart-weekly').getContext('2d');
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.label),
+      datasets: [{
+        label: 'Km',
+        data: data.map(d => d.km),
+        backgroundColor: data.map(d => d.km > 0 ? ACCENT + 'cc' : MUTED + '44'),
+        borderColor: data.map(d => d.km > 0 ? ACCENT : 'transparent'),
+        borderWidth: 1,
+        borderRadius: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#111', borderColor: ACCENT, borderWidth: 1,
+          callbacks: {
+            label: item => {
+              const d = data[item.dataIndex];
+              return ` ${d.km} km  ·  ${d.runs} salida(s)  ·  ${d.minutes} min`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { grid: { color: '#1e1e1e' }, ticks: { callback: v => v + ' km' } }
+      }
+    }
+  });
+}
+
+// ── ZONES ─────────────────────────────────────────────
+async function loadZones() {
+  const data = await api('/api/zones');
+  const zonesList = document.getElementById('zones-list');
+
+  zonesList.innerHTML = data.map(z => `
+    <div class="zone-row">
+      <div class="zone-label" title="${z.label}">${z.label}</div>
+      <div class="zone-bar-bg">
+        <div class="zone-bar-fill" style="width:${z.pct}%; background:${z.color}"></div>
+      </div>
+      <div class="zone-pct">${z.pct}%</div>
+    </div>
+  `).join('');
+
+  const ctx = document.getElementById('chart-zones').getContext('2d');
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: data.map(z => z.zone),
+      datasets: [{
+        data: data.map(z => z.pct),
+        backgroundColor: data.map(z => z.color + 'cc'),
+        borderColor: data.map(z => z.color),
+        borderWidth: 1,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '62%',
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { boxWidth: 12, padding: 10, font: { size: 10 } }
+        },
+        tooltip: {
+          backgroundColor: '#111', borderColor: '#2a2a2a', borderWidth: 1,
+          callbacks: { label: item => ` ${item.label}: ${item.parsed}%` }
+        }
+      }
+    }
+  });
+}
+
+// ── RECORDS ───────────────────────────────────────────
+async function loadRecords() {
+  const data = await api('/api/records');
+  const grid = document.getElementById('records-grid');
+  grid.innerHTML = data.map(r => `
+    <div class="record-card">
+      <div class="record-dist">${r.label}</div>
+      <div class="record-pace">${r.pace}</div>
+      <div class="record-meta">${r.date || 'sin datos'}${r.hr ? ` · ${r.hr}ppm` : ''}</div>
+    </div>
+  `).join('');
+}
+
+// ── HEATMAP ───────────────────────────────────────────
+async function loadHeatmap() {
+  const data = await api('/api/heatmap');
+  const container = document.getElementById('heatmap-container');
+
+  // Build a map: date → {runs, km}
+  const byDay = {};
+  data.forEach(d => { byDay[d.day] = d; });
+
+  // Build 53 weeks × 7 days
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - 364);
+  // Align to Monday
+  const dow = start.getDay();
+  start.setDate(start.getDate() - (dow === 0 ? 6 : dow - 1));
+
+  const weeks = [];
+  let cur = new Date(start);
+  while (cur <= today) {
+    const week = [];
+    for (let d = 0; d < 7; d++) {
+      const iso = cur.toISOString().slice(0, 10);
+      week.push({ date: iso, ...byDay[iso] });
+      cur.setDate(cur.getDate() + 1);
+    }
+    weeks.push(week);
+  }
+
+  // Month labels
+  let monthHtml = '<div class="heatmap-months">';
+  let lastMonth = '';
+  weeks.forEach(week => {
+    const month = week[0].date.slice(5, 7);
+    const monthNames = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    if (month !== lastMonth) {
+      monthHtml += `<div class="heatmap-month-label" style="min-width:${14}px">${monthNames[parseInt(month)]}</div>`;
+      lastMonth = month;
+    } else {
+      monthHtml += `<div class="heatmap-month-label"></div>`;
+    }
+  });
+  monthHtml += '</div>';
+
+  // Cells
+  let gridHtml = '<div class="heatmap-grid">';
+  weeks.forEach(week => {
+    gridHtml += '<div class="heatmap-col">';
+    week.forEach(day => {
+      const runs = day.runs || 0;
+      const km   = day.km || 0;
+      const level = runs === 0 ? 0 : km < 4 ? 1 : km < 8 ? 2 : 3;
+      const isFuture = day.date > today.toISOString().slice(0,10);
+      gridHtml += `<div class="heatmap-cell"
+        data-level="${isFuture ? -1 : level}"
+        style="${isFuture ? 'opacity:.2;pointer-events:none' : ''}"
+        onmouseenter="showTip(event,'<b>${day.date}</b><br>${runs > 0 ? runs+' salida(s) · '+km+' km' : 'sin entrenamiento'}')"
+        onmouseleave="hideTip()"></div>`;
+    });
+    gridHtml += '</div>';
+  });
+  gridHtml += '</div>';
+
+  container.innerHTML = monthHtml + '<div class="heatmap-wrap">' + gridHtml + '</div>';
+}
+
+// ── WORKOUTS TABLE ────────────────────────────────────
+async function loadTable() {
+  const data = await api('/api/workouts');
+  const tbody = document.getElementById('workouts-tbody');
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted);padding:1rem">No hay entrenamientos</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(r => `
+    <tr>
+      <td>${r.date}</td>
+      <td><span class="badge ${r.sport === 'Running' ? 'badge-run' : 'badge-bike'}">${r.sport}</span></td>
+      <td>${r.dist_km} km</td>
+      <td>${r.time_fmt}</td>
+      <td>${r.pace_fmt}</td>
+      <td>${r.avg_hr || '--'}</td>
+      <td>${r.max_hr || '--'}</td>
+      <td>${r.avg_cadence ? Math.round(r.avg_cadence) : '--'}</td>
+      <td>${r.calories || '--'}</td>
+    </tr>
+  `).join('');
+}
+
+// ── INIT ──────────────────────────────────────────────
+(async () => {
+  await loadSummary();
+  await Promise.all([
+    loadEfficiency(),
+    loadWeekly(),
+    loadZones(),
+    loadRecords(),
+    loadHeatmap(),
+    loadTable(),
+  ]);
+})();
+</script>
+</body>
+</html>
