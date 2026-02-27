@@ -14,6 +14,8 @@ Uso:
     python tcx_tracker.py stats                       # Estadísticas generales
     python tcx_tracker.py show <id>                   # Ver detalle de un entrenamiento
     python tcx_tracker.py export <id>                 # Exportar trackpoints a CSV
+    python tcx_tracker.py delete <id>                 # Eliminar un entrenamiento
+    python tcx_tracker.py delete <id> --confirm       # Eliminar sin pedir confirmación
 """
 
 import sqlite3
@@ -477,6 +479,38 @@ def export_trackpoints(workout_id: int):
 
 
 # ─────────────────────────────────────────────
+# ELIMINAR
+# ─────────────────────────────────────────────
+def delete_workout(workout_id: int, confirm: bool = False):
+    """Elimina un entrenamiento y sus trackpoints de la base de datos."""
+    with get_connection() as conn:
+        w = conn.execute(
+            "SELECT file_name, sport, start_time, distance_m FROM workouts WHERE id=?",
+            (workout_id,)
+        ).fetchone()
+
+    if not w:
+        print(f"✗ No existe el entrenamiento con ID={workout_id}")
+        return
+
+    fname, sport, start, dist = w
+    dist_km = f"{dist/1000:.2f} km" if dist else "--"
+    print(f"  ID {workout_id} | {sport} | {start[:10]} | {dist_km} | {fname}")
+
+    if not confirm:
+        resp = input("¿Eliminar este entrenamiento? [s/N]: ").strip().lower()
+        if resp not in ("s", "si", "sí", "y", "yes"):
+            print("Cancelado.")
+            return
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM trackpoints WHERE workout_id=?", (workout_id,))
+        conn.execute("DELETE FROM workouts WHERE id=?", (workout_id,))
+
+    print(f"✓ Entrenamiento #{workout_id} eliminado (incluidos sus trackpoints).")
+
+
+# ─────────────────────────────────────────────
 # WATCHER — vigilancia automática de carpeta
 # ─────────────────────────────────────────────
 def get_known_files() -> set:
@@ -567,6 +601,10 @@ def main():
 
     elif cmd == "export" and len(sys.argv) >= 3:
         export_trackpoints(int(sys.argv[2]))
+
+    elif cmd == "delete" and len(sys.argv) >= 3:
+        confirm = "--confirm" in sys.argv
+        delete_workout(int(sys.argv[2]), confirm=confirm)
 
     else:
         print(__doc__)
