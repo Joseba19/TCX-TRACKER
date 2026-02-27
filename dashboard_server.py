@@ -225,20 +225,118 @@ def api_zones():
 
 
 # ─────────────────────────────────────────────────────
-# API — RÉCORDS
+# API — RÉCORDS (ventana deslizante GPS)
 # ─────────────────────────────────────────────────────
+import math
+
+def _haversine(lat1, lon1, lat2, lon2):
+    R = 6371000
+    p = math.pi / 180
+    a = (math.sin((lat2-lat1)*p/2)**2 +
+         math.cos(lat1*p) * math.cos(lat2*p) *
+         math.sin((lon2-lon1)*p/2)**2)
+    return 2 * R * math.asin(math.sqrt(a))
+
+def _best_segment(workout_id, target_m):
+    """Mejor segmento de target_m metros en un entrenamiento (ventana deslizante GPS)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT time, latitude, longitude FROM trackpoints
+            WHERE workout_id=? AND latitude IS NOT NULL AND longitude IS NOT NULL
+            ORDER BY time
+        """, (workout_id,)).fetchall()
+
+    if len(rows) < 2:
+        return None
+
+    cum_dist = [0.0]
+    times = [rows[0][0]]
+    for i in range(1, len(rows)):
+        _, lat0, lon0 = rows[i-1]
+        _, lat1, lon1 = rows[i]
+        cum_dist.append(cum_dist[-1] + _haversine(lat0, lon0, lat1, lon1))
+        times.append(rows[i][0])
+
+    if cum_dist[-1] < target_m:
+        return None
+
+    best_s = float('inf')
+    best_start = 0.0
+
+    j = 0
+    for i in range(1, len(rows)):
+        while j < i and cum_dist[i] - cum_dist[j] >= target_m:
+            seg_dist = cum_dist[i] - cum_dist[i-1]
+            t_i = datetime.strptime(times[i], "%Y-%m-%dT%H:%M:%SZ")
+            t_j = datetime.strptime(times[j], "%Y-%m-%dT%H:%M:%SZ")
+            t_prev = datetime.strptime(times[i-1], "%Y-%m-%dT%H:%M:%SZ")
+            dt_full = (t_i - t_j).total_seconds()
+            dt_prev = (t_prev - t_j).total_seconds()
+            if seg_dist > 0:
+                needed = target_m - (cum_dist[i-1] - cum_dist[j])
+                elapsed = dt_prev + (needed / seg_dist) * (dt_full - dt_prev)
+            else:
+                elapsed = dt_full
+            if elapsed < best_s:
+                best_s = elapsed
+                best_start = cum_dist[j]
+            j += 1
+
+    if best_s == float('inf'):
+        return None
+
+    km_start = best_start / 1000
+    km_end   = (best_start + target_m) / 1000
+    return {
+        "time_s":   best_s,
+        "time_fmt": f"{int(best_s//60)}:{int(best_s%60):02d}",
+        "segment":  f"km {km_start:.1f} – {km_end:.1f}",
+        "km_start": round(km_start, 2),
+        "km_end":   round(km_end, 2),
+    }
+
+
 @app.route("/api/records")
 def api_records():
-    targets = [{"dist_km": 1, "label": "1 km"}, {"dist_km": 3, "label": "3 km"},
-               {"dist_km": 5, "label": "5 km"}, {"dist_km": 10, "label": "10 km"}]
+    targets = [
+        {"dist_km": 1,       "label": "1 km"},
+        {"dist_km": 3,       "label": "3 km"},
+        {"dist_km": 5,       "label": "5 km"},
+        {"dist_km": 10,      "label": "10 km"},
+        {"dist_km": 21.0975, "label": "Media"},
+        {"dist_km": 42.195,  "label": "Maratón"},
+    ]
+    # Obtener todos los entrenamientos con suficiente distancia
     records = []
     for t in targets:
-        row = query("SELECT start_time, avg_pace_sec_km, distance_m, avg_hr FROM workouts WHERE distance_m >= ? AND avg_pace_sec_km IS NOT NULL ORDER BY avg_pace_sec_km ASC LIMIT 1", (t["dist_km"]*1000,))
-        if row:
-            r = row[0]
-            records.append({"label": t["label"], "pace": fmt_pace(r["avg_pace_sec_km"]), "pace_sec": r["avg_pace_sec_km"], "date": r["start_time"][:10], "hr": r["avg_hr"]})
+        target_m = t["dist_km"] * 1000
+        workouts = query(
+            "SELECT id, start_time, distance_m FROM workouts WHERE distance_m >= ? ORDER BY id",
+            (target_m * 0.98,)  # margen 2% por imprecisión GPS
+        )
+        best = None
+        for w in workouts:
+            seg = _best_segment(w["id"], target_m)
+            if seg and (best is None or seg["time_s"] < best["time_s"]):
+                best = seg
+                best["date"] = w["start_time"][:10]
+
+        if best:
+            records.append({
+                "label":    t["label"],
+                "time_fmt": best["time_fmt"],
+                "time_s":   best["time_s"],
+                "segment":  best["segment"],
+                "date":     best["date"],
+            })
         else:
-            records.append({"label": t["label"], "pace": "--", "pace_sec": None, "date": None, "hr": None})
+            records.append({
+                "label":    t["label"],
+                "time_fmt": "--",
+                "time_s":   None,
+                "segment":  "sin datos",
+                "date":     None,
+            })
     return jsonify(records)
 
 

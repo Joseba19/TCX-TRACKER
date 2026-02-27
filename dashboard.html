@@ -605,7 +605,7 @@ tbody td {
         <div class="compare-stat-row" style="font-size:.65rem;color:var(--muted);padding-bottom:.3rem">
           <div>Métrica</div><div style="text-align:right;color:var(--accent)">A</div>
           <div style="text-align:right;color:var(--accent2)">B</div>
-          <div style="text-align:right">B vs A</div>
+          <div style="text-align:right">Δ B vs A</div>
         </div>
         <div id="compare-rows"></div>
       </div>
@@ -618,7 +618,12 @@ tbody td {
 
   <!-- ── TABLA HISTORIAL ───────────────────────────── -->
   <div class="card">
-    <div class="section-title">Historial completo</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+      <div class="section-title" style="margin-bottom:0;flex:1">Historial completo</div>
+      <button class="btn btn-ghost" onclick="exportCSV()" style="font-size:.7rem;padding:.3rem .8rem">
+        ↓ Exportar CSV
+      </button>
+    </div>
     <div class="table-wrap">
       <table id="workouts-table">
         <thead>
@@ -915,8 +920,9 @@ async function loadRecords() {
   grid.innerHTML = data.map(r => `
     <div class="record-card">
       <div class="record-dist">${r.label}</div>
-      <div class="record-pace">${r.pace}</div>
-      <div class="record-meta">${r.date || 'sin datos'}${r.hr ? ` · ${r.hr}ppm` : ''}</div>
+      <div class="record-pace">${r.time_fmt}</div>
+      <div class="record-meta">${r.date || 'sin datos'}</div>
+      <div class="record-meta" style="color:var(--muted);margin-top:.1rem;font-size:.62rem">${r.segment}</div>
     </div>
   `).join('');
 }
@@ -1198,6 +1204,32 @@ async function initCompareDates() {
   document.getElementById('cmp-a-to').value   = prevMonthEnd;
   document.getElementById('cmp-b-from').value = thisMonthStart;
   document.getElementById('cmp-b-to').value   = today;
+}
+
+// ── EXPORT CSV ───────────────────────────────────────
+async function exportCSV() {
+  const data = await api('/api/workouts');
+  if (!data.length) { alert('No hay entrenamientos para exportar.'); return; }
+
+  const headers = ['id','fecha','deporte','distancia_km','tiempo','ritmo_min_km',
+                   'fc_media','fc_max','cadencia_media','calorias'];
+  const rows = data.map(r => [
+    r.id, r.date, r.sport, r.dist_km, r.time_fmt,
+    r.pace_fmt, r.avg_hr ?? '', r.max_hr ?? '',
+    r.avg_cadence ? Math.round(r.avg_cadence) : '', r.calories ?? ''
+  ]);
+
+  const csv = [headers, ...rows]
+    .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `tcx_tracker_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ── INIT ──────────────────────────────────────────────
