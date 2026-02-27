@@ -340,6 +340,135 @@ def api_records():
     return jsonify(records)
 
 
+
+# ─────────────────────────────────────────────────────
+# API — DETALLE DE UN ENTRENAMIENTO
+# ─────────────────────────────────────────────────────
+def _km_splits(rows):
+    """Calcula splits por km desde trackpoints GPS."""
+    if len(rows) < 2:
+        return []
+    splits, bucket, km_n = [], {"dist":0.0,"time_s":0.0,"hr":[],"cad":[],"speed":[]}, 1
+    t0 = datetime.strptime(rows[0][0], "%Y-%m-%dT%H:%M:%SZ")
+    for i in range(1, len(rows)):
+        lat0,lon0 = rows[i-1][1], rows[i-1][2]
+        lat1,lon1 = rows[i][1],   rows[i][2]
+        if not all([lat0,lon0,lat1,lon1]): continue
+        d  = _haversine(lat0,lon0,lat1,lon1)
+        dt = (datetime.strptime(rows[i][0],"%Y-%m-%dT%H:%M:%SZ") -
+              datetime.strptime(rows[i-1][0],"%Y-%m-%dT%H:%M:%SZ")).total_seconds()
+        bucket["dist"]   += d
+        bucket["time_s"] += dt
+        hr, cad, spd = rows[i][3], rows[i][4], rows[i][5]
+        if hr:           bucket["hr"].append(hr)
+        if cad and cad>0: bucket["cad"].append(cad)
+        if spd:          bucket["speed"].append(spd)
+        if bucket["dist"] >= 1000:
+            pace = bucket["time_s"] / (bucket["dist"] / 1000)
+            splits.append({
+                "km": km_n, "pace_s": round(pace),
+                "pace_fmt": f"{int(pace//60)}:{int(pace%60):02d}",
+                "avg_hr":   round(sum(bucket["hr"])/len(bucket["hr"])) if bucket["hr"] else None,
+                "avg_cad":  round(sum(bucket["cad"])/len(bucket["cad"])) if bucket["cad"] else None,
+                "avg_speed":round(sum(bucket["speed"])/len(bucket["speed"]),2) if bucket["speed"] else None,
+                "avg_pace_s": round(1000 / (sum(bucket["speed"])/len(bucket["speed"]))) if bucket["speed"] else None,
+            })
+            km_n += 1
+            bucket = {"dist":0.0,"time_s":0.0,"hr":[],"cad":[],"speed":[]}
+    if bucket["dist"] > 50:
+        pace = bucket["time_s"] / (bucket["dist"] / 1000)
+        splits.append({
+            "km": f"{km_n}*", "pace_s": round(pace),
+            "pace_fmt": f"{int(pace//60)}:{int(pace%60):02d}",
+            "avg_hr":   round(sum(bucket["hr"])/len(bucket["hr"])) if bucket["hr"] else None,
+            "avg_cad":  round(sum(bucket["cad"])/len(bucket["cad"])) if bucket["cad"] else None,
+            "avg_speed":round(sum(bucket["speed"])/len(bucket["speed"]),2) if bucket["speed"] else None,
+        })
+    return splits
+
+
+@app.route("/api/workouts/<int:workout_id>/detail")
+def api_workout_detail(workout_id):
+    w = query("SELECT * FROM workouts WHERE id=?", (workout_id,))
+    if not w:
+        return jsonify({"error": "No encontrado"}), 404
+    w = w[0]
+
+    rows = query("""
+        SELECT time, latitude, longitude, hr, cadence, speed_ms
+        FROM trackpoints WHERE workout_id=? AND latitude IS NOT NULL
+        ORDER BY time
+    """, (workout_id,))
+
+    if not rows:
+        return jsonify({"error": "Sin trackpoints"}), 404
+
+    # Series temporales — submuestreo cada ~10 puntos para no saturar el frontend
+    step = max(1, len(rows) // 200)
+    t0 = datetime.strptime(rows[0]["time"], "%Y-%m-%dT%H:%M:%SZ")
+
+    series = {"elapsed": [], "hr": [], "pace": [], "cadence": [], "stride": []}
+
+    # Calcular velocidad suavizada (media móvil 5 puntos) para el ritmo
+    speeds = [r["speed_ms"] for r in rows]
+    def smooth(arr, w=5):
+        out = []
+        for i in range(len(arr)):
+            sl = arr[max(0,i-w):i+w+1]
+            sl = [x for x in sl if x is not None]
+            out.append(sum(sl)/len(sl) if sl else None)
+        return out
+    speeds_smooth = smooth(speeds, 8)
+
+    for i in range(0, len(rows), step):
+        r = rows[i]
+        t = datetime.strptime(r["time"], "%Y-%m-%dT%H:%M:%SZ")
+        elapsed = int((t - t0).total_seconds())
+        spd = speeds_smooth[i]
+
+        pace_s = round(1000 / spd) if spd and spd > 0.3 else None
+        # Zancada en metros: velocidad (m/s) / (cadencia pasos/min / 60)
+        cad = r["cadence"]
+        stride = float(f"{spd / (cad / 60):.2f}") if spd and cad and cad > 0 else None
+
+        series["elapsed"].append(elapsed)
+        series["hr"].append(r["hr"])
+        series["pace"].append(pace_s)
+        series["cadence"].append(cad if cad and cad > 0 else None)
+        series["stride"].append(stride)
+
+    splits = _km_splits([(r["time"],r["latitude"],r["longitude"],r["hr"],r["cadence"],r["speed_ms"]) for r in rows])
+
+    # Zonas FC de este entrenamiento
+    hr_vals = [r["hr"] for r in rows if r["hr"]]
+    total_hr = len(hr_vals) or 1
+    zones = [
+        round(sum(1 for h in hr_vals if h <  115)              / total_hr * 100, 1),
+        round(sum(1 for h in hr_vals if 115 <= h < 135)        / total_hr * 100, 1),
+        round(sum(1 for h in hr_vals if 135 <= h < 155)        / total_hr * 100, 1),
+        round(sum(1 for h in hr_vals if 155 <= h < 170)        / total_hr * 100, 1),
+        round(sum(1 for h in hr_vals if h >= 170)              / total_hr * 100, 1),
+    ]
+
+    return jsonify({
+        "workout": {
+            "id":        w["id"],
+            "sport":     w["sport"],
+            "date":      w["start_time"][:10] if w["start_time"] else "",
+            "notes":     w["notes"],
+            "dist_km":   round((w["distance_m"] or 0)/1000, 2),
+            "time_fmt":  fmt_time(w["total_time_sec"]),
+            "pace_fmt":  fmt_pace(w["avg_pace_sec_km"]),
+            "avg_hr":    w["avg_hr"],
+            "max_hr":    w["max_hr"],
+            "calories":  w["calories"],
+            "avg_cad":   round(w["avg_cadence"]) if w["avg_cadence"] else None,
+        },
+        "series":  series,
+        "splits":  splits,
+        "zones":   zones,
+    })
+
 # ─────────────────────────────────────────────────────
 # API — HEATMAP
 # ─────────────────────────────────────────────────────

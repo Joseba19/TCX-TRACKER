@@ -457,6 +457,91 @@ tbody td {
 .delta-neu { color: var(--muted); }
 .compare-chart-wrap { height: 180px; margin-top: 1rem; }
 
+
+/* ── DETAIL VIEW ─────────────────────────────────── */
+#detail-view { display: none; }
+#dashboard-view { display: contents; }
+
+.back-btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  font-family: var(--font-head); font-size: .8rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); background: none; border: none;
+  cursor: pointer; padding: 0; transition: color .15s;
+  margin-bottom: 1.25rem;
+}
+.back-btn:hover { color: var(--accent); }
+.back-btn::before { content: '←'; font-size: 1rem; }
+
+.detail-header {
+  display: flex; flex-wrap: wrap; gap: 1.5rem;
+  align-items: flex-start; margin-bottom: 1.5rem;
+}
+.detail-title {
+  font-size: 2rem; font-weight: 900; letter-spacing: .04em;
+  line-height: 1; color: var(--text);
+}
+.detail-title span { color: var(--accent); }
+.detail-notes {
+  font-size: .78rem; color: var(--muted); font-family: var(--font-mono);
+  margin-top: .35rem;
+}
+
+.detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: .75rem; margin-bottom: 1.5rem;
+}
+.detail-stat {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--r); padding: .75rem 1rem;
+}
+.detail-stat-label {
+  font-size: .6rem; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: .2rem;
+}
+.detail-stat-value {
+  font-size: 1.6rem; font-weight: 900; line-height: 1; color: var(--text);
+}
+.detail-stat-value .unit {
+  font-size: .85rem; font-weight: 400; color: var(--muted); margin-left: .1em;
+}
+
+.detail-three-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1.25rem;
+}
+@media (max-width: 1100px) { .detail-three-col { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px)  { .detail-three-col { grid-template-columns: 1fr; } }
+
+.detail-chart-wrap { height: 280px; position: relative; }
+
+/* splits table */
+.splits-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.splits-table th {
+  font-size: .6rem; font-weight: 700; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--muted);
+  padding: .4rem .6rem; border-bottom: 1px solid var(--border); text-align: left;
+}
+.splits-table td {
+  padding: .5rem .6rem; font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border); color: var(--text);
+}
+.splits-table tr:last-child td { border-bottom: none; }
+.splits-table tr:hover td { background: var(--surface2); }
+.split-bar {
+  height: 6px; border-radius: 2px; background: var(--accent);
+  display: inline-block; vertical-align: middle; margin-left: .4rem;
+  transition: width .4s;
+}
+.split-fastest { color: var(--green) !important; }
+.split-slowest { color: var(--red) !important; }
+
+/* zone mini bars in detail */
+.detail-zones { display: flex; flex-direction: column; gap: .45rem; margin-top: .5rem; }
+.detail-zone-row { display: grid; grid-template-columns: 90px 1fr 40px; gap: .5rem; align-items: center; }
+
 </style>
 </head>
 
@@ -472,6 +557,66 @@ tbody td {
 
 <main>
 
+  <!-- ── DETAIL VIEW ─────────────────────────────── -->
+  <div id="detail-view">
+    <button class="back-btn" onclick="showDashboard()">Volver al dashboard</button>
+
+    <div class="detail-header">
+      <div>
+        <div class="detail-title" id="detail-title">Running <span>—</span></div>
+        <div class="detail-notes" id="detail-notes"></div>
+      </div>
+    </div>
+
+    <div class="detail-stats" id="detail-stats"></div>
+
+    <!-- Ritmo + FC (fila 1) -->
+    <div class="two-col" style="margin-bottom:1.25rem">
+      <div class="card">
+        <div class="section-title">Ritmo</div>
+        <div class="detail-chart-wrap"><canvas id="chart-detail-pace"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Frecuencia cardíaca</div>
+        <div class="detail-chart-wrap"><canvas id="chart-detail-hr"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Cadencia + Zancada (fila 2) -->
+    <div class="two-col" style="margin-bottom:1.25rem">
+      <div class="card">
+        <div class="section-title">Cadencia</div>
+        <div class="detail-chart-wrap"><canvas id="chart-detail-cad"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Longitud de zancada</div>
+        <div class="detail-chart-wrap"><canvas id="chart-detail-stride"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Zonas FC + Splits en la misma fila -->
+    <div class="two-col" style="margin-bottom:1.25rem">
+      <div class="card">
+        <div class="section-title">Zonas FC · esta sesión</div>
+        <div class="detail-zones" id="detail-zones"></div>
+      </div>
+      <div class="card">
+      <div class="section-title">Splits por kilómetro</div>
+      <div class="table-wrap">
+        <table class="splits-table">
+          <thead>
+            <tr>
+              <th>Km</th><th>Ritmo</th><th>FC media</th><th>Cadencia</th><th>Vel.</th><th>Visual</th>
+            </tr>
+          </thead>
+          <tbody id="splits-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    </div><!-- end two-col -->
+  </div>
+
+  <div id="dashboard-view">
   <!-- ── FILTER BAR ──────────────────────────────── -->
   <div class="filter-bar">
     <label>Período</label>
@@ -647,6 +792,7 @@ tbody td {
     </div>
   </div>
 
+  </div>
 </main>
 
 <!-- tooltip global -->
@@ -1004,7 +1150,7 @@ async function loadTable() {
   }
 
   tbody.innerHTML = data.map(r => `
-    <tr id="row-${r.id}">
+    <tr id="row-${r.id}" onclick="openDetail(${r.id}, event)" style="cursor:pointer">
       <td>${r.date}</td>
       <td><span class="badge ${r.sport === 'Running' ? 'badge-run' : 'badge-bike'}">${r.sport}</span></td>
       <td>${r.dist_km} km</td>
@@ -1204,6 +1350,184 @@ async function initCompareDates() {
   document.getElementById('cmp-a-to').value   = prevMonthEnd;
   document.getElementById('cmp-b-from').value = thisMonthStart;
   document.getElementById('cmp-b-to').value   = today;
+}
+
+// ── DETAIL VIEW ──────────────────────────────────────
+const detailCharts = {};
+
+function destroyDetailCharts() {
+  Object.keys(detailCharts).forEach(k => { detailCharts[k].destroy(); delete detailCharts[k]; });
+}
+
+function showDashboard() {
+  document.getElementById('detail-view').style.display    = 'none';
+  document.getElementById('dashboard-view').style.display = 'contents';
+  window.scrollTo(0, 0);
+}
+
+async function openDetail(id, event) {
+  // Ignore clicks on the delete button
+  if (event.target.closest('.btn-danger')) return;
+
+  document.getElementById('detail-view').style.display    = 'block';
+  document.getElementById('dashboard-view').style.display = 'none';
+  window.scrollTo(0, 0);
+
+  destroyDetailCharts();
+  // Show skeletons while loading
+  ['detail-stats','splits-tbody','detail-zones'].forEach(el => {
+    document.getElementById(el).innerHTML = '<div class="skeleton" style="height:40px"></div>';
+  });
+
+  const d = await api(`/api/workouts/${id}/detail`);
+  if (d.error) { alert(d.error); showDashboard(); return; }
+
+  const { workout: w, series: s, splits, zones } = d;
+
+  // Header
+  document.getElementById('detail-title').innerHTML =
+    `${w.sport} <span>— ${w.date}</span>`;
+  document.getElementById('detail-notes').textContent = w.notes || '';
+
+  // Stats cards
+  document.getElementById('detail-stats').innerHTML = [
+    { label: 'Distancia',    value: w.dist_km,  unit: 'km' },
+    { label: 'Tiempo',       value: w.time_fmt, unit: ''   },
+    { label: 'Ritmo medio',  value: w.pace_fmt, unit: '/km'},
+    { label: 'FC media',     value: w.avg_hr ?? '--', unit: 'ppm' },
+    { label: 'FC máxima',    value: w.max_hr ?? '--', unit: 'ppm' },
+    { label: 'Cadencia',     value: w.avg_cad ?? '--', unit: 'spm'},
+    { label: 'Calorías',     value: (w.calories||0).toLocaleString('es-ES'), unit: 'kcal'},
+  ].map(st => `
+    <div class="detail-stat">
+      <div class="detail-stat-label">${st.label}</div>
+      <div class="detail-stat-value">${st.value}<span class="unit">${st.unit}</span></div>
+    </div>`).join('');
+
+  // ── Time axis labels (mm:ss) ─────────────────────────
+  const timeLabels = s.elapsed.map(e => {
+    const m = Math.floor(e/60), sec = e%60;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  });
+
+  const chartOpts = (yLabel, color, yCallback) => ({
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: { backgroundColor:'#111', borderColor: color, borderWidth:1,
+        callbacks: { title: items => `Tiempo: ${timeLabels[items[0].dataIndex]}` }
+      }
+    },
+    scales: {
+      x: { grid:{display:false}, ticks:{ maxTicksLimit:8, callback:(v,i)=>timeLabels[i] } },
+      y: { grid:{color:'#1e1e1e'}, title:{display:true,text:yLabel,color:'#555',font:{size:10}},
+           ticks:{ callback: yCallback || (v=>v) } }
+    }
+  });
+
+  // ── PACE chart (inverted Y: lower sec/km = faster = top) ──
+  const secToMinKm = v => v ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2,'0')}` : '';
+  const paceValid = s.pace.map(p => p && p > 60 && p < 900 ? p : null);
+  const paceCtx = document.getElementById('chart-detail-pace').getContext('2d');
+  detailCharts.pace = new Chart(paceCtx, {
+    type: 'line',
+    data: { labels: s.elapsed, datasets: [{
+      data: paceValid, borderColor: ACCENT, backgroundColor: ACCENT+'18',
+      fill: true, tension: 0, borderWidth: 1.5, pointRadius: 0, spanGaps: true,
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#111', borderColor: ACCENT, borderWidth: 1,
+          callbacks: {
+            title: items => `Tiempo: ${timeLabels[items[0].dataIndex]}`,
+            label: item => ` Ritmo: ${secToMinKm(item.raw)} /km`,
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{ maxTicksLimit:8, callback:(v,i)=>timeLabels[i] } },
+        y: {
+          reverse: true,
+          grid: { color: '#1e1e1e' },
+          title: { display: true, text: 'min/km', color: '#555', font: { size: 10 } },
+          ticks: { callback: secToMinKm }
+        }
+      }
+    }
+  });
+
+  // ── HR chart ───────────────────────────────────────────
+  const hrCtx = document.getElementById('chart-detail-hr').getContext('2d');
+  detailCharts.hr = new Chart(hrCtx, {
+    type: 'line',
+    data: { labels: s.elapsed, datasets: [{
+      data: s.hr, borderColor: '#ef4444', backgroundColor: '#ef444418',
+      fill: true, tension: 0.2, borderWidth: 1.5, pointRadius: 0, spanGaps: true,
+    }]},
+    options: chartOpts('ppm', '#ef4444', v => v + ' ppm'),
+  });
+
+  // ── Cadence chart ──────────────────────────────────────
+  const cadCtx = document.getElementById('chart-detail-cad').getContext('2d');
+  detailCharts.cad = new Chart(cadCtx, {
+    type: 'line',
+    data: { labels: s.elapsed, datasets: [{
+      data: s.cadence, borderColor: ACCENT2, backgroundColor: ACCENT2+'18',
+      fill: true, tension: 0.2, borderWidth: 1.5, pointRadius: 0, spanGaps: true,
+    }]},
+    options: chartOpts('pasos/min', ACCENT2, v => v + ' spm'),
+  });
+
+  // ── Stride chart ───────────────────────────────────────
+  const strideCtx = document.getElementById('chart-detail-stride').getContext('2d');
+  detailCharts.stride = new Chart(strideCtx, {
+    type: 'line',
+    data: { labels: s.elapsed, datasets: [{
+      data: s.stride, borderColor: '#818cf8', backgroundColor: '#818cf818',
+      fill: true, tension: 0.2, borderWidth: 1.5, pointRadius: 0, spanGaps: true,
+    }]},
+    options: chartOpts('metros', '#818cf8', v => v ? parseFloat(v).toFixed(2) + ' m' : ''),
+  });
+
+  // ── Zones ──────────────────────────────────────────────
+  const zoneColors  = ['#4ade80','#86efac','#facc15','#f97316','#ef4444'];
+  const zoneLabels  = ['Z1 <115','Z2 115-135','Z3 135-155','Z4 155-170','Z5 >170'];
+  document.getElementById('detail-zones').innerHTML = zones.map((pct, i) => `
+    <div class="detail-zone-row">
+      <div style="font-size:.7rem;color:var(--muted)">${zoneLabels[i]}</div>
+      <div style="height:8px;background:var(--surface2);border-radius:2px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${zoneColors[i]};border-radius:2px"></div>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;text-align:right">${pct}%</div>
+    </div>`).join('');
+
+  // ── Splits ─────────────────────────────────────────────
+  if (splits.length) {
+    const paces = splits.map(s => s.pace_s).filter(Boolean);
+    const minP = Math.min(...paces), maxP = Math.max(...paces);
+    document.getElementById('splits-tbody').innerHTML = splits.map(sp => {
+      const barW = sp.pace_s ? Math.round((maxP - sp.pace_s) / (maxP - minP + 1) * 60) : 0;
+      const isFastest = sp.pace_s === minP;
+      const isSlowest = sp.pace_s === maxP;
+      const cls = isFastest ? 'split-fastest' : isSlowest ? 'split-slowest' : '';
+      return `<tr>
+        <td>${sp.km}</td>
+        <td class="${cls}">${sp.pace_fmt}</td>
+        <td>${sp.avg_hr ?? '--'}</td>
+        <td>${sp.avg_cad ?? '--'}</td>
+        <td>${sp.avg_speed ? (sp.avg_speed * 3.6).toFixed(1) + ' km/h' : '--'}</td>
+        <td><span class="split-bar" style="width:${barW}px;background:${isFastest?'var(--green)':isSlowest?'var(--red)':'var(--accent)'}"></span></td>
+      </tr>`;
+    }).join('');
+  } else {
+    document.getElementById('splits-tbody').innerHTML =
+      '<tr><td colspan="6" style="color:var(--muted)">Sin datos de splits</td></tr>';
+  }
 }
 
 // ── EXPORT CSV ───────────────────────────────────────
