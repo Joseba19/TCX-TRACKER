@@ -404,38 +404,47 @@ def api_workout_detail(workout_id):
         return jsonify({"error": "Sin trackpoints"}), 404
 
     # Series temporales — submuestreo cada ~10 puntos para no saturar el frontend
-    step = max(1, len(rows) // 200)
     t0 = datetime.strptime(rows[0]["time"], "%Y-%m-%dT%H:%M:%SZ")
-
     series = {"elapsed": [], "hr": [], "pace": [], "cadence": [], "stride": []}
 
-    # Calcular velocidad suavizada (media móvil 5 puntos) para el ritmo
-    speeds = [r["speed_ms"] for r in rows]
-    def smooth(arr, w=5):
-        out = []
-        for i in range(len(arr)):
-            sl = arr[max(0,i-w):i+w+1]
-            sl = [x for x in sl if x is not None]
-            out.append(sum(sl)/len(sl) if sl else None)
-        return out
-    speeds_smooth = smooth(speeds, 8)
+    # Series en bloques de 30 segundos — elimina picos GPS sin perder detalle útil
+    # El ritmo se calcula como distancia total del bloque / tiempo del bloque (igual que splits)
+    BLOCK_SEC = 30
+    bucket = {"spds": [], "hrs": [], "cads": [], "t_start": None}
 
-    for i in range(0, len(rows), step):
-        r = rows[i]
-        t = datetime.strptime(r["time"], "%Y-%m-%dT%H:%M:%SZ")
-        elapsed = int((t - t0).total_seconds())
-        spd = speeds_smooth[i]
-
-        pace_s = round(1000 / spd) if spd and spd > 0.3 else None
-        # Zancada en metros: velocidad (m/s) / (cadencia pasos/min / 60)
-        cad = r["cadence"]
-        stride = float(f"{spd / (cad / 60):.2f}") if spd and cad and cad > 0 else None
-
+    def flush_bucket(b, t_end):
+        if not b["spds"] or b["t_start"] is None:
+            return
+        elapsed = int(b["t_start"] + (t_end - b["t_start"]) / 2)
+        spds  = [s for s in b["spds"] if s and s > 0.3]
+        hrs   = [h for h in b["hrs"]  if h]
+        cads  = [c for c in b["cads"] if c and c > 0]
+        avg_spd = sum(spds) / len(spds) if spds else None
+        avg_hr  = round(sum(hrs)  / len(hrs))  if hrs  else None
+        avg_cad = round(sum(cads) / len(cads)) if cads else None
+        pace_s  = round(1000 / avg_spd)        if avg_spd else None
+        stride  = float(f"{avg_spd / (avg_cad / 60):.2f}") if avg_spd and avg_cad else None
         series["elapsed"].append(elapsed)
-        series["hr"].append(r["hr"])
+        series["hr"].append(avg_hr)
         series["pace"].append(pace_s)
-        series["cadence"].append(cad if cad and cad > 0 else None)
+        series["cadence"].append(avg_cad)
         series["stride"].append(stride)
+
+    block_start_t = None
+    for r in rows:
+        t = datetime.strptime(r["time"], "%Y-%m-%dT%H:%M:%SZ")
+        elapsed = (t - t0).total_seconds()
+        if block_start_t is None:
+            block_start_t = elapsed
+            bucket["t_start"] = elapsed
+        if elapsed - block_start_t >= BLOCK_SEC:
+            flush_bucket(bucket, elapsed)
+            block_start_t = elapsed
+            bucket = {"spds": [], "hrs": [], "cads": [], "t_start": elapsed}
+        bucket["spds"].append(r["speed_ms"])
+        bucket["hrs"].append(r["hr"])
+        bucket["cads"].append(r["cadence"])
+    flush_bucket(bucket, elapsed)
 
     splits = _km_splits([(r["time"],r["latitude"],r["longitude"],r["hr"],r["cadence"],r["speed_ms"]) for r in rows])
 
@@ -449,6 +458,9 @@ def api_workout_detail(workout_id):
         round(sum(1 for h in hr_vals if 155 <= h < 170)        / total_hr * 100, 1),
         round(sum(1 for h in hr_vals if h >= 170)              / total_hr * 100, 1),
     ]
+
+    # Interval detection
+    interval_data = _detect_intervals(rows)
 
     return jsonify({
         "workout": {
@@ -467,7 +479,167 @@ def api_workout_detail(workout_id):
         "series":  series,
         "splits":  splits,
         "zones":   zones,
+        "intervals": interval_data,
     })
+
+
+# ─────────────────────────────────────────────────────
+# DETECCIÓN DE INTERVALOS
+# ─────────────────────────────────────────────────────
+def _detect_intervals(rows, min_phase_sec=15):
+    """
+    Detecta fases run/walk desde trackpoints.
+    rows: lista de dicts con keys time, speed_ms, hr, cadence
+    Devuelve dict con intervalos y estadísticas o None si no hay datos.
+    """
+    from collections import Counter
+
+    # Decidir señal de detección: cadencia si disponible (más estable que GPS)
+    # Zepp/Garmin a veces reporta pasos/pierna → multiplicar x2 si max < 120
+    cads_raw = [r["cadence"] for r in rows if r["cadence"] and r["cadence"] > 0]
+    use_cadence = len(cads_raw) > len(rows) * 0.7  # al menos 70% de puntos con cadencia
+
+    if use_cadence:
+        cad_max = max(cads_raw)
+        cad_factor = 2 if cad_max < 120 else 1  # corregir half-step si necesario
+        cads_norm = [c * cad_factor for c in cads_raw]
+
+        # Umbral automático: valle bimodal entre 120 y 170 spm
+        buckets = Counter(round(c / 5) * 5 for c in cads_norm)
+        valley_cad, valley_count = 145, float("inf")
+        for v in range(120, 170, 5):
+            c = sum(buckets.get(v + d, 0) for d in [-5, 0, 5])
+            if c < valley_count:
+                valley_count, valley_cad = c, v
+        cad_threshold = max(125, min(165, valley_cad))
+        threshold_label = f"{cad_threshold} spm (cadencia)"
+    else:
+        # Fallback a velocidad GPS
+        speeds = [r["speed_ms"] for r in rows if r["speed_ms"] is not None]
+        if len(speeds) < 20:
+            return None
+        buckets = Counter(round(s * 5) / 5 for s in speeds)
+        valley_speed, valley_count = 1.75, float("inf")
+        for v in [x / 10 for x in range(12, 22)]:
+            c = sum(buckets.get(round(b * 5) / 5, 0) for b in [v - 0.1, v, v + 0.1])
+            if c < valley_count:
+                valley_count, valley_speed = c, v
+        cad_threshold = None
+        cad_factor = 1
+        speed_threshold = max(1.4, min(2.0, valley_speed))
+        threshold_label = f"{fmt_pace(round(1000/speed_threshold))} /km (velocidad)"
+
+    # Asignar fase por punto
+    t0 = datetime.strptime(rows[0]["time"], "%Y-%m-%dT%H:%M:%SZ")
+    points = []
+    for r in rows:
+        elapsed = (datetime.strptime(r["time"], "%Y-%m-%dT%H:%M:%SZ") - t0).total_seconds()
+        cad = r["cadence"]
+        spd = r["speed_ms"]
+        if use_cadence:
+            if not cad or cad == 0:
+                continue  # ignorar puntos sin cadencia
+            phase = "run" if cad * cad_factor >= cad_threshold else "walk"
+        else:
+            if spd is None:
+                continue
+            phase = "run" if spd >= speed_threshold else "walk"
+        points.append({
+            "t": elapsed, "spd": spd, "hr": r["hr"], "cad": cad, "phase": phase
+        })
+
+    if not points:
+        return None
+
+    # Con cadencia la señal ya es limpia — no necesita suavizado previo.
+    # Con velocidad GPS sí había spikes, pero al usar cadencia se eliminan solos.
+    # Segmentar directamente por cambios de fase:
+    segments = []
+    cur = {"phase": points[0]["phase"], "start": points[0]["t"], "pts": [points[0]]}
+    for p in points[1:]:
+        if p["phase"] == cur["phase"]:
+            cur["pts"].append(p)
+        else:
+            cur["end"] = p["t"]
+            cur["dur"] = cur["end"] - cur["start"]
+            segments.append(cur)
+            cur = {"phase": p["phase"], "start": p["t"], "pts": [p]}
+    cur["end"] = points[-1]["t"]
+    cur["dur"] = cur["end"] - cur["start"]
+    segments.append(cur)
+
+    def seg_stats(pts):
+        spds = [p["spd"] for p in pts if p["spd"]]
+        hrs  = [p["hr"]  for p in pts if p["hr"]]
+        cads = [p["cad"] for p in pts if p["cad"] and p["cad"] > 0]
+        avg_spd = sum(spds) / len(spds) if spds else 0
+        avg_pace = round(1000 / avg_spd) if avg_spd > 0.1 else None
+        return {
+            "avg_pace": avg_pace,
+            "pace_fmt": fmt_pace(avg_pace),
+            "avg_hr":   round(sum(hrs) / len(hrs)) if hrs else None,
+            "avg_cad":  round(sum(cads) / len(cads)) if cads else None,
+            "avg_kmh":  round(avg_spd * 3.6, 1),
+        }
+
+    run_intervals, walk_intervals = [], []
+    n_run = n_walk = 1
+    for seg in segments:
+        st = seg_stats(seg["pts"])
+        entry = {
+            **st,
+            "start_s": round(seg["start"]),
+            "end_s":   round(seg["end"]),
+            "dur_s":   round(seg["dur"]),
+            "dur_fmt": fmt_time(seg["dur"]),
+        }
+        if seg["phase"] == "run":
+            entry["n"] = n_run; n_run += 1
+            run_intervals.append(entry)
+        else:
+            entry["n"] = n_walk; n_walk += 1
+            walk_intervals.append(entry)
+
+    # Descartar segmentos walk al inicio y al final del entrenamiento
+    # (calentamiento y enfriamiento no son recuperaciones entre intervalos)
+    if walk_intervals and segments[0]["phase"] == "walk":
+        walk_intervals = walk_intervals[1:]
+        walk_intervals = [dict(w, n=i+1) for i, w in enumerate(walk_intervals)]
+    if walk_intervals and segments[-1]["phase"] == "walk":
+        walk_intervals = walk_intervals[:-1]
+        walk_intervals = [dict(w, n=i+1) for i, w in enumerate(walk_intervals)]
+
+    if len(run_intervals) < 2:
+        return None  # no es entrenamiento de intervalos
+
+    # Estadísticas globales corriendo vs andando
+    all_run  = [p for s in segments if s["phase"] == "run"  for p in s["pts"]]
+    all_walk = [p for s in segments if s["phase"] == "walk" for p in s["pts"]]
+
+    def global_stats(pts):
+        st = seg_stats(pts)
+        return {**st, "total_s": round(sum(1 for _ in pts)),
+                "dur_s": round((pts[-1]["t"] - pts[0]["t"])) if pts else 0}
+
+    # Progresión: ¿el ritmo mejora o empeora entre intervalos?
+    pace_vals = [r["avg_pace"] for r in run_intervals if r["avg_pace"]]
+    progression = None
+    if len(pace_vals) >= 2:
+        diff = pace_vals[-1] - pace_vals[0]
+        if diff < -10:   progression = "negative"   # más rápido al final
+        elif diff > 10:  progression = "positive"   # más lento al final
+        else:            progression = "stable"
+
+    return {
+        "threshold_label": threshold_label,
+        "detection_method": "cadence" if use_cadence else "speed",
+        "run_intervals":   run_intervals,
+        "walk_intervals":  walk_intervals,
+        "run_stats":       global_stats(all_run),
+        "walk_stats":      global_stats(all_walk),
+        "progression":     progression,
+    }
+
 
 # ─────────────────────────────────────────────────────
 # API — HEATMAP
