@@ -188,10 +188,8 @@ def parse_tcx(filepath: str) -> dict:
     cadences = [tp["cadence"] for tp in trackpoints if tp["cadence"]]
     avg_cadence = sum(cadences) / len(cadences) if cadences else None
 
-    # Ritmo medio en seg/km
-    if avg_speed and avg_speed > 0:
-        avg_pace_sec_km = 1000 / avg_speed
-    elif total_dist > 0 and total_time > 0:
+    # Ritmo medio en seg/km — siempre desde tiempo/distancia totales (más preciso)
+    if total_dist > 0 and total_time > 0:
         avg_pace_sec_km = total_time / (total_dist / 1000)
     else:
         avg_pace_sec_km = None
