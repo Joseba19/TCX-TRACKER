@@ -623,7 +623,10 @@ tbody td {
 
   <!-- ── DETAIL VIEW ─────────────────────────────── -->
   <div id="detail-view">
-    <button class="back-btn" onclick="showDashboard()">Volver al dashboard</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem">
+      <button class="back-btn" style="margin-bottom:0" onclick="showDashboard()">Volver al dashboard</button>
+      <button class="btn btn-ghost" onclick="exportDetailJSON()" style="font-size:.7rem;padding:.3rem .8rem">↓ Exportar JSON</button>
+    </div>
 
     <div class="detail-header">
       <div>
@@ -1477,6 +1480,93 @@ function showDashboard() {
   window.scrollTo(0, 0);
 }
 
+let _lastDetailData = null;
+
+function exportDetailJSON() {
+  if (!_lastDetailData) return;
+  const d = _lastDetailData;
+  const w = d.workout;
+
+  const payload = {
+    meta: {
+      exported_at: new Date().toISOString(),
+      source: "TCX Tracker",
+    },
+    workout: {
+      id:        w.id,
+      date:      w.date,
+      sport:     w.sport,
+      notes:     w.notes || null,
+      distance_km:  w.dist_km,
+      duration:     w.time_fmt,
+      pace_avg:     w.pace_fmt,
+      hr_avg:       w.avg_hr,
+      hr_max:       w.max_hr,
+      cadence_avg:  w.avg_cad,
+      calories:     w.calories,
+    },
+    splits_per_km: d.splits.map(s => ({
+      km:       s.km,
+      pace:     s.pace_fmt,
+      hr_avg:   s.avg_hr,
+      cadence:  s.avg_cad,
+      speed_kmh: s.avg_speed ? parseFloat((s.avg_speed * 3.6).toFixed(1)) : null,
+    })),
+    hr_zones_pct: {
+      z1_under_115:  d.zones[0],
+      z2_115_135:    d.zones[1],
+      z3_135_155:    d.zones[2],
+      z4_155_170:    d.zones[3],
+      z5_over_170:   d.zones[4],
+    },
+  };
+
+  // Include interval analysis if present
+  if (d.intervals) {
+    const iv = d.intervals;
+    payload.interval_analysis = {
+      detection_method: iv.detection_method,
+      threshold:        iv.threshold_label,
+      progression:      iv.progression,
+      running_stats: {
+        pace_avg:    iv.run_stats.pace_fmt,
+        hr_avg:      iv.run_stats.avg_hr,
+        cadence_avg: iv.run_stats.avg_cad,
+        speed_kmh:   iv.run_stats.avg_kmh,
+      },
+      walking_stats: {
+        pace_avg:    iv.walk_stats.pace_fmt,
+        hr_avg:      iv.walk_stats.avg_hr,
+        cadence_avg: iv.walk_stats.avg_cad,
+        speed_kmh:   iv.walk_stats.avg_kmh,
+      },
+      run_intervals: iv.run_intervals.map(r => ({
+        n:        r.n,
+        duration: r.dur_fmt,
+        pace:     r.pace_fmt,
+        hr_avg:   r.avg_hr,
+        cadence:  r.avg_cad,
+        speed_kmh: r.avg_kmh,
+      })),
+      walk_intervals: iv.walk_intervals.map(w => ({
+        n:        w.n,
+        duration: w.dur_fmt,
+        pace:     w.pace_fmt,
+        hr_avg:   w.avg_hr,
+      })),
+    };
+  }
+
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `entrenamiento_${w.date}_${w.dist_km}km.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function openDetail(id, event) {
   // Ignore clicks on the delete button
   if (event.target.closest('.btn-danger')) return;
@@ -1494,6 +1584,7 @@ async function openDetail(id, event) {
   const d = await api(`/api/workouts/${id}/detail`);
   if (d.error) { alert(d.error); showDashboard(); return; }
 
+  _lastDetailData = d;
   const { workout: w, series: s, splits, zones } = d;
 
   // Header
